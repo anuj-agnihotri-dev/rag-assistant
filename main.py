@@ -1087,7 +1087,7 @@ from fastapi.responses import HTMLResponse
 from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from fastembed import TextEmbedding
 from langchain_text_splitters import CharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 
@@ -1133,15 +1133,33 @@ app = FastAPI(
 )
 
 
-# =========================================================
+## =========================================================
 # 3. EMBEDDINGS
 # =========================================================
 
 print("Embedding model load ho raha hai...")
 
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
+class FastEmbedWrapper:
+    def __init__(self):
+        self.model = TextEmbedding(
+    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 )
+
+    def embed_query(self, text):
+        return list(
+            self.model.embed([f"query: {text}"])
+        )[0].tolist()
+
+    def embed_documents(self, texts):
+        return [
+            vector.tolist()
+            for vector in self.model.embed(
+                [f"passage: {text}" for text in texts]
+            )
+        ]
+
+
+embeddings = FastEmbedWrapper()
 
 print("Embedding model ready.")
 
@@ -1656,9 +1674,11 @@ def search_documents(
     )
 
 
-    try:
+    with conn.cursor() as cur:
 
-        with conn.cursor() as cur:
+            print(
+                f"[QUERY] {query}"
+            )
 
             cur.execute(
                 """
@@ -1672,12 +1692,18 @@ def search_documents(
                 FROM documents
 
                 ORDER BY
+                    CASE
+                        WHEN LOWER(content) LIKE LOWER(%s)
+                        THEN 0
+                        ELSE 1
+                    END,
                     embedding <=> %s::vector
 
                 LIMIT %s
                 """,
                 (
                     vector_string,
+                    f"%{query}%",
                     vector_string,
                     k
                 )
@@ -1685,11 +1711,11 @@ def search_documents(
 
             rows = cur.fetchall()
 
+            print(
+                f"[PDF SEARCH] Found {len(rows)} results"
+            )
 
             return rows
-    finally:
-
-        conn.close()
 
 
 # =========================================================
@@ -1810,41 +1836,22 @@ async def ask_question(
         # CASE 1: DIRECT PDF MATCH
         # =================================================
 
-        if best_similarity >= DOCUMENT_SIMILARITY_THRESHOLD:
+        print(
+            f"[PDF CHECK] Similarity: "
+            f"{best_similarity:.3f}"
+        )
 
-            relevant_results = [
-                result
-                for result in clean_results
-                if result[2] >= DOCUMENT_SIMILARITY_THRESHOLD
-            ]
+        # ---------------------------------------------
+        # Give top 3 PDF chunks to verifier
+        # ---------------------------------------------
 
-            print(
-                f"[PDF] Direct match: "
-                f"{best_similarity:.3f}"
-            )
+        check_context = "\n\n".join(
+            content
+            for content, metadata, similarity
+            in clean_results
+        )
 
-        # =================================================
-        # CASE 2: BELOW 0.50
-        # =================================================
-
-        else:
-
-            print(
-                f"[PDF CHECK] Similarity: "
-                f"{best_similarity:.3f}"
-            )
-
-            # ---------------------------------------------
-            # Give top 3 PDF chunks to verifier
-            # ---------------------------------------------
-
-            check_context = "\n\n".join(
-                content
-                for content, metadata, similarity
-                in clean_results
-            )
-
-            check_prompt = f"""
+        check_prompt = f"""
 You are checking whether the provided PDF
 context contains enough information to answer
 the user's question.
@@ -1877,52 +1884,56 @@ The answer may appear as:
 Do not use outside knowledge.
 """
 
-            # ---------------------------------------------
-            # LLM verification
-            # ---------------------------------------------
+        # ---------------------------------------------
+        # LLM verification
+        # ---------------------------------------------
 
-            try:
+        try:
 
-                check_response = llm.invoke(
-                    check_prompt
-                )
+            check_response = llm.invoke(
+                check_prompt
+            )
 
-                decision = (
-                    check_response.content
-                    .strip()
-                    .upper()
-                )
+            decision = (
+                check_response.content
+                .strip()
+                .upper()
+            )
 
-            except Exception as e:
+        except Exception as e:
 
-                print(
-                    f"[PDF CHECK ERROR] {str(e)}"
-                )
+            print(
+                f"[PDF CHECK ERROR] {str(e)}"
+            )
 
-                decision = "NO"
+            decision = "NO"
 
-            # ---------------------------------------------
-            # PDF FOUND
-            # ---------------------------------------------
+        print(
+            f"[PDF CHECK] Decision: {decision}"
+        )
 
-            if decision.startswith("YES"):
+        # ---------------------------------------------
+        # PDF FOUND
+        # ---------------------------------------------
 
-                relevant_results = clean_results
+        if decision.startswith("YES"):
 
-                print(
-                    "[PDF] Answer found after document check."
-                )
+            relevant_results = clean_results
 
-            # ---------------------------------------------
-            # PDF NOT FOUND
-            # ---------------------------------------------
+            print(
+                "[PDF] Answer found after document check."
+            )
 
-            else:
+        # ---------------------------------------------
+        # PDF NOT FOUND
+        # ---------------------------------------------
 
-                print(
-                    "[WEB] PDF answer not found. "
-                    "Searching Tavily..."
-                )
+        else:
+
+            print(
+                "[WEB] PDF answer not found. "
+                "Searching Tavily..."
+            )
 
     # =====================================================
     # PDF ANSWER
