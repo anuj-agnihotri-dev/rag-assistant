@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+langchain-groq
+langchain-community
+langchain-text-splitters
+pypdf
+sentence-transformers
+psycopg[binary]
+tavily-python
