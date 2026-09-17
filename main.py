@@ -1710,10 +1710,6 @@ def verify_graph_context(
 
         return False
 
-    print("\nDOCUMENT CONTEXT:")
-    print(document_context[:5000])
-    print("\nEND DOCUMENT CONTEXT\n")
-
     answer = answer_from_graph(
         question,
         graph_context,
