@@ -6,6 +6,5 @@ langchain-groq
 langchain-community
 langchain-text-splitters
 pypdf
-fastembed
 psycopg[binary]
 tavily-python
