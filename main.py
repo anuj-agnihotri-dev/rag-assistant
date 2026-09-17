@@ -283,7 +283,12 @@ def extract_json(text: str):
 # GRAPH EXTRACTION FROM CHUNK
 # ============================================================
 
+# ============================================================
+# EXTRACT GRAPH FROM CHUNK
+# ============================================================
+
 def extract_graph_from_chunk(content: str):
+
     prompt = f"""
 Extract a small knowledge graph from this document text.
 
@@ -297,7 +302,12 @@ Rules:
 - Maximum 20 entities
 - Maximum 20 relationships
 - Keep entity names short
+- Extract direct relationships explicitly stated in the text
+- Every relationship source and target MUST exactly match an entity name from the entities list
+- NEVER create a relationship using a name that is not present in entities
+- Use the exact same spelling for relationship source and target as used in entities
 - Ignore figures, course codes, page labels and irrelevant words
+- Do not create entities for generic phrases unless they are actual concepts discussed in the text
 - No explanation
 - No markdown
 - No reasoning
@@ -307,49 +317,121 @@ TEXT:
 """
 
     try:
+
         response = llm.invoke(prompt)
 
-        content_text = getattr(response, "content", "")
+        content_text = getattr(
+            response,
+            "content",
+            ""
+        )
 
         if not content_text:
-            print("Graph extraction: model returned no final content")
+
+            print(
+                "Graph extraction: model returned no final content"
+            )
+
             print(
                 "Finish reason:",
-                getattr(response, "response_metadata", {}).get("finish_reason")
+                getattr(
+                    response,
+                    "response_metadata",
+                    {}
+                ).get(
+                    "finish_reason"
+                )
             )
+
             return [], []
 
-        text = str(content_text).strip()
+        text = str(
+            content_text
+        ).strip()
 
         print("GRAPH JSON:")
-        print(text[:2000])
+        print(
+            text[:2000]
+        )
+
+        # ----------------------------------------------------
+        # Remove markdown code fences if model adds them
+        # ----------------------------------------------------
 
         if "```" in text:
-            text = text.replace("```json", "")
-            text = text.replace("```JSON", "")
-            text = text.replace("```", "")
+
+            text = text.replace(
+                "```json",
+                ""
+            )
+
+            text = text.replace(
+                "```JSON",
+                ""
+            )
+
+            text = text.replace(
+                "```",
+                ""
+            )
+
             text = text.strip()
 
-        data = extract_json(text)
+        # ----------------------------------------------------
+        # Extract JSON
+        # ----------------------------------------------------
 
-        if not isinstance(data, dict):
-            print("Graph extraction: invalid JSON")
+        data = extract_json(
+            text
+        )
+
+        if not isinstance(
+            data,
+            dict
+        ):
+
+            print(
+                "Graph extraction: invalid JSON"
+            )
+
             return [], []
 
-        entities = data.get("entities", [])
-        relationships = data.get("relationships", [])
+        entities = data.get(
+            "entities",
+            []
+        )
 
-        if not isinstance(entities, list):
+        relationships = data.get(
+            "relationships",
+            []
+        )
+
+        if not isinstance(
+            entities,
+            list
+        ):
             entities = []
 
-        if not isinstance(relationships, list):
+        if not isinstance(
+            relationships,
+            list
+        ):
             relationships = []
 
-        return entities[:20], relationships[:20]
+        return (
+            entities[:20],
+            relationships[:20]
+        )
 
     except Exception as e:
-        print("Graph extraction error:", e)
+
+        print(
+            "Graph extraction error:",
+            e
+        )
+
         return [], []
+
 
 # ============================================================
 # INSERT / GET ENTITY
@@ -365,15 +447,21 @@ def get_or_create_entity(
     if not name:
         return None
 
-    name = str(name).strip()
+    name = str(
+        name
+    ).strip()
 
-    normalized = normalize_entity_name(name)
+    normalized = normalize_entity_name(
+        name
+    )
 
     if not normalized:
         return None
 
     entity_type = (
-        str(entity_type).strip()[:100]
+        str(
+            entity_type
+        ).strip()[:100]
         if entity_type
         else "CONCEPT"
     )
@@ -431,8 +519,10 @@ def build_graph_for_chunk(
     content: str
 ):
 
-    entities, relationships = extract_graph_from_chunk(
-        content
+    entities, relationships = (
+        extract_graph_from_chunk(
+            content
+        )
     )
 
     entity_map = {}
@@ -443,10 +533,16 @@ def build_graph_for_chunk(
 
     for entity in entities:
 
-        if not isinstance(entity, dict):
+        if not isinstance(
+            entity,
+            dict
+        ):
             continue
 
-        name = entity.get("name")
+        name = entity.get(
+            "name"
+        )
+
         entity_type = entity.get(
             "type",
             "CONCEPT"
@@ -464,13 +560,20 @@ def build_graph_for_chunk(
 
         if entity_id:
 
-            normalized = normalize_entity_name(
-                str(name)
+            normalized = (
+                normalize_entity_name(
+                    str(name)
+                )
             )
 
-            entity_map[normalized] = entity_id
+            entity_map[
+                normalized
+            ] = entity_id
 
-            # Entity -> chunk
+            # ------------------------------------------------
+            # Entity -> Chunk
+            # ------------------------------------------------
+
             cur.execute(
                 """
                 INSERT INTO entity_mentions
@@ -495,23 +598,47 @@ def build_graph_for_chunk(
 
     for rel in relationships:
 
-        if not isinstance(rel, dict):
+        if not isinstance(
+            rel,
+            dict
+        ):
             continue
 
-        source = rel.get("source")
-        relation = rel.get("relation")
-        target = rel.get("target")
+        source = rel.get(
+            "source"
+        )
+
+        relation = rel.get(
+            "relation"
+        )
+
+        target = rel.get(
+            "target"
+        )
 
         if not source or not relation or not target:
             continue
 
-        source_normalized = normalize_entity_name(
-            str(source)
+        source_normalized = (
+            normalize_entity_name(
+                str(source)
+            )
         )
 
-        target_normalized = normalize_entity_name(
-            str(target)
+        target_normalized = (
+            normalize_entity_name(
+                str(target)
+            )
         )
+
+        # ----------------------------------------------------
+        # IMPORTANT
+        #
+        # Source and target MUST already exist
+        # in entity_map.
+        #
+        # We DO NOT create missing entities here.
+        # ----------------------------------------------------
 
         source_id = entity_map.get(
             source_normalized
@@ -521,31 +648,31 @@ def build_graph_for_chunk(
             target_normalized
         )
 
-        # Sometimes extractor relationship entity
-        # was not present in entity list.
-        if not source_id:
-
-            source_id = get_or_create_entity(
-                cur,
-                document_id,
-                str(source),
-                "CONCEPT"
-            )
-
-        if not target_id:
-
-            target_id = get_or_create_entity(
-                cur,
-                document_id,
-                str(target),
-                "CONCEPT"
-            )
+        # ----------------------------------------------------
+        # Invalid relationship
+        # ----------------------------------------------------
 
         if not source_id or not target_id:
+
+            print(
+                "Skipping invalid relationship:",
+                source,
+                "->",
+                target
+            )
+
             continue
+
+        # ----------------------------------------------------
+        # Prevent self relationship
+        # ----------------------------------------------------
 
         if source_id == target_id:
             continue
+
+        # ----------------------------------------------------
+        # Normalize relation
+        # ----------------------------------------------------
 
         relation = normalize_entity_name(
             str(relation)
@@ -553,6 +680,10 @@ def build_graph_for_chunk(
 
         if not relation:
             continue
+
+        # ----------------------------------------------------
+        # Insert relationship
+        # ----------------------------------------------------
 
         cur.execute(
             """
@@ -577,7 +708,6 @@ def build_graph_for_chunk(
                 page_number
             )
         )
-
 
 # ============================================================
 # ADMIN UPLOAD
@@ -1573,17 +1703,41 @@ def verify_graph_context(
     graph_context: str,
     document_context: str
 ):
-    if graph_context and graph_context.strip():
-        print("GRAPH VERIFICATION: YES")
-        return True
 
-    if document_context and document_context.strip():
-        print("GRAPH VERIFICATION: YES")
-        return True
+    if not document_context or not document_context.strip():
 
-    print("GRAPH VERIFICATION: NO")
-    return False
+        print("GRAPH VERIFICATION: NO")
 
+        return False
+
+    print("\nDOCUMENT CONTEXT:")
+    print(document_context[:5000])
+    print("\nEND DOCUMENT CONTEXT\n")
+
+    answer = answer_from_graph(
+        question,
+        graph_context,
+        document_context
+    )
+
+    print("VERIFICATION ANSWER:")
+    print(answer)
+
+    if not answer:
+
+        print("GRAPH VERIFICATION: NO")
+
+        return False
+
+    if answer.strip() == "Document me iska answer nahi mila.":
+
+        print("GRAPH VERIFICATION: NO")
+
+        return False
+
+    print("GRAPH VERIFICATION: YES")
+
+    return True
 # ============================================================
 # PDF ANSWER
 # ============================================================
