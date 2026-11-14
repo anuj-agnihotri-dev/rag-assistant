@@ -10,3 +10,4 @@ psycopg[binary]
 tavily-python
 groq
 PyMuPDF
+supabase
